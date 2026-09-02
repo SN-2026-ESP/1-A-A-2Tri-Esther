@@ -176,13 +176,31 @@ def baixar_vra() -> list[dict]:
                   "publicado ainda, ou o nome do arquivo/pasta mudou de novo.")
             return []
         r.raise_for_status()
-        # Decodifica com latin-1 (padrão do VRA)
+        # Decodifica com latin-1 (padrão do VRA), removendo BOM se presente
         texto = r.content.decode("latin-1", errors="replace")
+        if texto.startswith("\ufeff"):
+            texto = texto.lstrip("\ufeff")
+        texto = texto.replace("ï»¿", "")  # BOM UTF-8 mal decodificado em latin-1
+
+        linhas_texto = texto.split("\n")
+
+        # NOVO (2026-08): a ANAC passou a incluir uma linha de metadado
+        # ("Atualizado em: AAAA-MM-DD") ANTES do cabeçalho real do CSV.
+        # Detecta e descarta essa linha se não parecer um cabeçalho de dados.
+        if linhas_texto and (
+            "atualizado em" in linhas_texto[0].lower()
+            or linhas_texto[0].count(";") == 0
+        ):
+            print(f"  Descartando linha de metadado inicial: {linhas_texto[0]!r}")
+            linhas_texto = linhas_texto[1:]
+
+        texto_limpo = "\n".join(linhas_texto)
+
         # Detecta o delimitador automaticamente (';' era o padrão antigo,
         # mas a reestruturação do portal pode ter mudado para ',')
-        primeira_linha = texto.split("\n", 1)[0]
+        primeira_linha = texto_limpo.split("\n", 1)[0]
         delimitador = ";" if primeira_linha.count(";") >= primeira_linha.count(",") else ","
-        reader = csv.DictReader(io.StringIO(texto), delimiter=delimitador)
+        reader = csv.DictReader(io.StringIO(texto_limpo), delimiter=delimitador)
         registros = list(reader)
         print(f"  VRA carregado: {len(registros)} linhas brutas (delimitador='{delimitador}')")
         if registros:
