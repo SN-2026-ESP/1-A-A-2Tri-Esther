@@ -89,21 +89,22 @@ VRA_URL = f"{BASE_PATH}VRA_{ano}{mes_int}.csv"
 print(f"URL alvo: {VRA_URL}")
 
 # Mapeamento de colunas do CSV do VRA
-# (nomes reais no arquivo — podem variar levemente entre versões.
-#  Se o arquivo baixar mas processar_vra() achar 0 registros mesmo
-#  havendo linhas no CSV, verifique os nomes de coluna reais aqui.)
+# ATUALIZADO (2026-08): a ANAC reestruturou o layout do arquivo. Nomes antigos
+# mantidos na lista por segurança/compatibilidade, mas os novos (confirmados
+# no arquivo de 2026-07) vêm primeiro.
 COLS = {
-    "empresa":       ["EMPRESA (SIGLA)", "Empresa (Sigla)", "sg_empresa_icao"],
-    "voo":           ["NÚMERO VOO",      "Numero Voo",      "nr_voo"],
-    "origem":        ["ORIGEM",          "Aeroporto Origem","sg_icao_origem"],
-    "destino":       ["DESTINO",         "Aeroporto Destino","sg_icao_destino"],
-    "dt_ref":        ["DT_REFERENCIA",   "Dt Referencia",   "data_referencia"],
-    "partida_prev":  ["PARTIDA PREVISTA","Partida Prevista", "dt_partida_prevista"],
-    "partida_real":  ["PARTIDA REAL",    "Partida Real",    "dt_partida_real"],
-    "chegada_prev":  ["CHEGADA PREVISTA","Chegada Prevista", "dt_chegada_prevista"],
-    "chegada_real":  ["CHEGADA REAL",    "Chegada Real",    "dt_chegada_real"],
-    "situacao":      ["SITUAÇÃO DE VOO", "Situacao Voo",    "situacao"],
-    "motivo":        ["MOTIVO",          "Motivo Alteracao","motivo_alteracao"],
+    "empresa":       ["ICAO Empresa Aérea", "EMPRESA (SIGLA)", "Empresa (Sigla)", "sg_empresa_icao"],
+    "voo":           ["Número Voo", "NÚMERO VOO", "Numero Voo", "nr_voo"],
+    "origem":        ["ICAO Aeródromo Origem", "ORIGEM", "Aeroporto Origem", "sg_icao_origem"],
+    "destino":       ["ICAO Aeródromo Destino", "DESTINO", "Aeroporto Destino", "sg_icao_destino"],
+    "partida_prev":  ["Partida Prevista", "PARTIDA PREVISTA", "dt_partida_prevista"],
+    "partida_real":  ["Partida Real", "PARTIDA REAL", "dt_partida_real"],
+    "chegada_prev":  ["Chegada Prevista", "CHEGADA PREVISTA", "dt_chegada_prevista"],
+    "chegada_real":  ["Chegada Real", "CHEGADA REAL", "dt_chegada_real"],
+    "situacao":      ["Situação Voo", "SITUAÇÃO DE VOO", "Situacao Voo", "situacao"],
+    "motivo":        ["Código Justificativa", "MOTIVO", "Motivo Alteracao", "motivo_alteracao"],
+    # "dt_ref" removido: essa coluna não existe mais no layout novo.
+    # A data de referência agora é derivada da data de "Partida Prevista".
 }
 
 
@@ -176,17 +177,14 @@ def baixar_vra() -> list[dict]:
                   "publicado ainda, ou o nome do arquivo/pasta mudou de novo.")
             return []
         r.raise_for_status()
-        # Decodifica com latin-1 (padrão do VRA), removendo BOM se presente
-        texto = r.content.decode("latin-1", errors="replace")
-        if texto.startswith("\ufeff"):
-            texto = texto.lstrip("\ufeff")
-        texto = texto.replace("ï»¿", "")  # BOM UTF-8 mal decodificado em latin-1
+        # CORREÇÃO (2026-08): o arquivo VRA passou a ser publicado em UTF-8
+        # (o formato antigo era latin-1). Usar utf-8-sig remove o BOM se presente.
+        texto = r.content.decode("utf-8-sig", errors="replace")
 
         linhas_texto = texto.split("\n")
 
-        # NOVO (2026-08): a ANAC passou a incluir uma linha de metadado
+        # A ANAC passou a incluir uma linha de metadado
         # ("Atualizado em: AAAA-MM-DD") ANTES do cabeçalho real do CSV.
-        # Detecta e descarta essa linha se não parecer um cabeçalho de dados.
         if linhas_texto and (
             "atualizado em" in linhas_texto[0].lower()
             or linhas_texto[0].count(";") == 0
@@ -223,7 +221,6 @@ def processar_vra(linhas: list[dict]) -> list[dict]:
 
         empresa       = get_col(row, "empresa")
         nr_voo        = get_col(row, "voo")
-        dt_ref_str    = get_col(row, "dt_ref")
         partida_prev  = get_col(row, "partida_prev")
         partida_real  = get_col(row, "partida_real")
         chegada_prev  = get_col(row, "chegada_prev")
@@ -231,13 +228,14 @@ def processar_vra(linhas: list[dict]) -> list[dict]:
         situacao      = get_col(row, "situacao")
         motivo        = get_col(row, "motivo")
 
-        # Data de referência
+        # Data de referência: derivada da data de "Partida Prevista"
+        # (a coluna dedicada DT_REFERENCIA não existe mais no layout novo)
         dt_ref = None
-        if dt_ref_str:
+        if partida_prev:
             try:
-                for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+                for fmt in ("%d/%m/%Y %H:%M", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S"):
                     try:
-                        dt_ref = datetime.strptime(dt_ref_str.strip(), fmt).date().isoformat()
+                        dt_ref = datetime.strptime(partida_prev.strip(), fmt).date().isoformat()
                         break
                     except ValueError:
                         continue
